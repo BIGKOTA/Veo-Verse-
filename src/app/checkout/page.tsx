@@ -31,281 +31,18 @@ import {
   Settings,
 } from "lucide-react";
 import Link from "next/link";
-import { loadStripe } from "@stripe/stripe-js";
-import {
-  Elements,
-  CardElement,
-  useStripe,
-  useElements,
-} from "@stripe/react-stripe-js";
+import dynamic from "next/dynamic";
 
-// Get Stripe publishable key
-const stripePublishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
-
-// Initialize Stripe
-const stripePromise = stripePublishableKey
-  ? loadStripe(stripePublishableKey)
-  : null;
-
-const cardElementOptions = {
-  style: {
-    base: {
-      fontSize: "16px",
-      color: "#ffffff",
-      "::placeholder": {
-        color: "#94a3b8",
-      },
-      backgroundColor: "transparent",
-    },
-    invalid: {
-      color: "#ef4444",
-    },
-  },
-  hidePostalCode: true,
-};
-
-// Payment Form Component with Stripe Elements
-function PaymentForm({
-  totalPrice,
-  includeCoaching,
-  formData,
-  onPaymentSuccess,
-}: {
-  totalPrice: number;
-  includeCoaching: boolean;
-  formData: any;
-  onPaymentSuccess: () => void;
-}) {
-  const stripe = useStripe();
-  const elements = useElements();
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [paymentError, setPaymentError] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
-  const [subscriptionId, setSubscriptionId] = useState("");
-
-  useEffect(() => {
-    // Create subscription or payment intent based on package type
-    const createPayment = async () => {
-      try {
-        const endpoint = includeCoaching
-          ? "/api/create-payment-intent"
-          : "/api/create-subscription";
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            amount: includeCoaching ? totalPrice : 25, // Base subscription is always $25
-            coachingAmount: includeCoaching ? 275 : 0, // Coaching add-on
-            metadata: {
-              includeCoaching: includeCoaching.toString(),
-              package: includeCoaching ? "premium" : "basic",
-              customerName: `${formData.firstName} ${formData.lastName}`,
-              customerEmail: formData.email,
-              referralCode: formData.referralCode || "",
-            },
-          }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || "Failed to create payment");
-        }
-
-        const data = await response.json();
-        setClientSecret(data.clientSecret);
-        if (data.subscriptionId) {
-          setSubscriptionId(data.subscriptionId);
-        }
-      } catch (error: any) {
-        console.error("Error creating payment:", error);
-        setPaymentError(
-          error.message ||
-            "Failed to initialize payment. Please refresh the page.",
-        );
-      }
-    };
-
-    if (formData.firstName && formData.lastName && formData.email) {
-      createPayment();
-    }
-  }, [totalPrice, includeCoaching, formData]);
-
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-
-    if (!stripe || !elements || !clientSecret) {
-      setPaymentError("Payment system not ready. Please try again.");
-      return;
-    }
-
-    if (!formData.firstName || !formData.lastName || !formData.email) {
-      setPaymentError("Please fill in all required fields.");
-      return;
-    }
-
-    setIsProcessing(true);
-    setPaymentError("");
-
-    const cardElement = elements.getElement(CardElement);
-    if (!cardElement) {
-      setPaymentError("Card information not found.");
-      setIsProcessing(false);
-      return;
-    }
-
-    try {
-      if (includeCoaching) {
-        // Handle one-time payment for coaching package
-        const { error, paymentIntent } = await stripe.confirmCardPayment(
-          clientSecret,
-          {
-            payment_method: {
-              card: cardElement,
-              billing_details: {
-                name: `${formData.firstName} ${formData.lastName}`,
-                email: formData.email,
-              },
-            },
-          },
-        );
-
-        if (error) {
-          console.error("Stripe payment error:", error);
-          setPaymentError(error.message || "Payment failed");
-          setIsProcessing(false);
-        } else if (paymentIntent && paymentIntent.status === "succeeded") {
-          onPaymentSuccess();
-        }
-      } else {
-        // Handle subscription setup for basic package
-        const { error, setupIntent } = await stripe.confirmSetupIntent(
-          clientSecret,
-          {
-            payment_method: {
-              card: cardElement,
-              billing_details: {
-                name: `${formData.firstName} ${formData.lastName}`,
-                email: formData.email,
-              },
-            },
-          },
-        );
-
-        if (error) {
-          console.error("Stripe setup error:", error);
-          setPaymentError(error.message || "Subscription setup failed");
-          setIsProcessing(false);
-        } else if (setupIntent && setupIntent.status === "succeeded") {
-          onPaymentSuccess();
-        }
-      }
-    } catch (error: any) {
-      console.error("Payment processing error:", error);
-      setPaymentError(error.message || "Payment failed");
-      setIsProcessing(false);
-    }
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div>
-        <Label className="text-cyan-100 mb-2 block">Card Information</Label>
-        <div className="bg-slate-700/50 border border-slate-600 rounded-md p-3">
-          <CardElement options={cardElementOptions} />
-        </div>
-      </div>
-
-      <Separator className="bg-purple-500/30" />
-
-      {/* Mandatory Instructions */}
-      <div className="bg-red-900/20 border border-red-500/50 p-4 rounded-lg mb-4">
-        <div className="text-red-400 font-bold text-lg mb-2 flex items-center gap-2">
-          <span className="text-red-500">⚠️</span>
-          MANDATORY INSTRUCTIONS
-        </div>
-        <p className="text-red-300 font-semibold text-sm leading-relaxed">
-          Once you receive your custom formatted prompt, you MUST read the
-          BOTTOM INSTRUCTIONS for the prompt to work properly!
-        </p>
-      </div>
-
-      <div className="bg-slate-700/30 p-4 rounded-lg">
-        <div className="flex justify-between items-center mb-2">
-          <div className="flex flex-col">
-            <span className="text-cyan-100">AI Prompt Generator</span>
-            {!includeCoaching && (
-              <span className="text-xs text-yellow-400">
-                Monthly Subscription
-              </span>
-            )}
-          </div>
-          <span className="text-white font-semibold">
-            $25.00{!includeCoaching && "/month"}
-          </span>
-        </div>
-        {includeCoaching && (
-          <div className="flex justify-between items-center mb-2">
-            <div className="flex flex-col">
-              <span className="text-cyan-100">Premium Coaching</span>
-              <span className="text-xs text-green-400">One-time add-on</span>
-            </div>
-            <span className="text-white font-semibold">$275.00</span>
-          </div>
-        )}
-        <Separator className="bg-slate-600 my-2" />
-        <div className="flex justify-between items-center font-bold">
-          <span className="text-white">Total</span>
-          <span className="text-white text-lg">
-            ${includeCoaching ? totalPrice : 25}.00
-            {!includeCoaching && "/month"}
-          </span>
-        </div>
-        <div className="flex justify-between items-center text-sm text-cyan-100/70 mt-1">
-          {includeCoaching ? (
-            <>
-              <span>Monthly subscription + one-time coaching</span>
-              <span>$25/month recurring</span>
-            </>
-          ) : (
-            <>
-              <span>Monthly subscription</span>
-              <span>Recurring billing</span>
-            </>
-          )}
-        </div>
-      </div>
-
-      {paymentError && (
-        <div className="bg-red-900/20 border border-red-500/50 p-3 rounded-lg">
-          <p className="text-red-400 text-sm">{paymentError}</p>
-        </div>
-      )}
-
-      <Button
-        type="submit"
-        disabled={isProcessing || !stripe || !clientSecret}
-        className="w-full bg-gradient-to-r from-cyan-500 via-blue-500 to-purple-600 hover:from-cyan-600 hover:via-blue-600 hover:to-purple-700 text-white font-bold py-3 text-lg shadow-lg hover:shadow-cyan-500/25 transition-all duration-300"
-      >
-        {isProcessing ? (
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-            {includeCoaching
-              ? "Processing Payment..."
-              : "Setting up Subscription..."}
-          </div>
-        ) : !clientSecret ? (
-          "Initializing Payment..."
-        ) : includeCoaching ? (
-          `Complete Payment - ${totalPrice}`
-        ) : (
-          "Start Monthly Subscription - $25/month"
-        )}
-      </Button>
-    </form>
-  );
-}
+// Dynamic imports for Stripe components
+const StripeWrapper = dynamic(() => import("./stripe-wrapper"), {
+  loading: () => (
+    <div className="flex items-center justify-center p-8">
+      <div className="w-6 h-6 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></div>
+      <span className="ml-2 text-cyan-100">Loading payment system...</span>
+    </div>
+  ),
+  ssr: false,
+});
 
 export default function CheckoutPage() {
   const [paymentComplete, setPaymentComplete] = useState(false);
@@ -760,14 +497,12 @@ export default function CheckoutPage() {
                   </div>
 
                   {/* Stripe Elements Payment Form */}
-                  <Elements stripe={stripePromise}>
-                    <PaymentForm
-                      totalPrice={totalPrice}
-                      includeCoaching={includeCoaching}
-                      formData={formData}
-                      onPaymentSuccess={handlePaymentSuccess}
-                    />
-                  </Elements>
+                  <StripeWrapper
+                    totalPrice={totalPrice}
+                    includeCoaching={includeCoaching}
+                    formData={formData}
+                    onPaymentSuccess={handlePaymentSuccess}
+                  />
                 </div>
               </CardContent>
               <CardFooter>
